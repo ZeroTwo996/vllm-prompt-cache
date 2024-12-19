@@ -394,7 +394,7 @@ async def _generate_with_prompt_cache(request_dict: dict, raw_request: Request) 
                     cache_whole_data[0],
                     round(time.time() - start_time, 6),
                 )
-            return _cache_data_convert(return_message) # 找到相似Prompt，直接返回结果
+            return JSONResponse({"text": _cache_data_convert(return_message)}) # 找到相似Prompt，直接返回结果
 
     # 没有找到相似Prompt，缓存Prompt及其向量，同时暂存“###Generating###”为该Prompt的结果，以便后续请求等待该Prompt推理完成
     question_id: int

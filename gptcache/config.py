@@ -37,7 +37,7 @@ class Config:
     def __init__(
             self,
             log_time_func: Optional[Callable[[str, float], None]] = None,
-            similarity_threshold: float = 0.8,
+            similarity_threshold: float = 0.9,
             prompts: Optional[List[str]] = None,
             template: Optional[str] = None,
             auto_flush: int = 20,

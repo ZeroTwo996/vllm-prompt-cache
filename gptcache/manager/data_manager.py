@@ -30,6 +30,14 @@ class DataManager(metaclass=ABCMeta):
         pass
 
     @abstractmethod
+    def save_prompt(self, question, embedding_data, **kwargs):
+        pass
+
+    @abstractmethod
+    def update_answer(self, key: int, answer: Answer):
+        pass
+
+    @abstractmethod
     def import_data(
             self,
             questions: List[Any],
@@ -130,6 +138,12 @@ class MapDataManager(DataManager):
         session = kwargs.get("session", None)
         session_id = {session.name} if session else set()
         self.data[embedding_data] = (question, answer, embedding_data, session_id)
+
+    def save_prompt(self, question, embedding_data, **kwargs):
+        return super().save_prompt(question, embedding_data, **kwargs)
+    
+    def update_answer(self, key, answer):
+        return super().update_answer(key, answer)
 
     def import_data(
         self,
@@ -275,6 +289,26 @@ class SSDataManager(DataManager):
         session = kwargs.get("session", None)
         session_id = session.name if session else None
         self.import_data([question], [answer], [embedding_data], [session_id], **kwargs)
+    
+    def save_prompt(self, question, embedding_data, **kwargs):
+        session = kwargs.get("session", None)
+        session_id = session.name if session else None
+        answer = Answer(f"###Generating###{str(question)}", DataType.STR)
+
+        embedding_data = normalize(embedding_data)
+        id = self.s.insert(
+            CacheData(
+                question=self._process_question_data(question),
+                answers=answer,
+                embedding_data=embedding_data.astype("float32"),
+                session_id=session_id,
+            ))
+        self.v.mul_add([VectorData(id=id, data=embedding_data)],**kwargs)
+        self.eviction_base.put([id])
+        return id
+    
+    def update_answer(self, key: int, answer: Answer):
+        self.s.update_answer_by_id(key, answer)
 
     def _process_answer_data(self, answers: Union[Answer, List[Answer]]):
         if isinstance(answers, Answer):

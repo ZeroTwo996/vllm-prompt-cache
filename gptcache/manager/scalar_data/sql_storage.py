@@ -8,6 +8,7 @@ from gptcache.manager.scalar_data.base import (
     CacheData,
     Question,
     QuestionDep,
+    Answer
 )
 from gptcache.utils import import_sqlalchemy
 
@@ -273,6 +274,57 @@ class SQLStorage(CacheStorage):
                 ids.append(self._insert(data, session))
             session.commit()
         return ids
+    
+    def insert(self, data: CacheData):
+        id: int
+        with self.Session() as session:
+            id = self._insert(data, session)
+            session.commit()
+        return id
+    
+    def update_answer_by_id(self, key: int, answer: Answer) -> bool:
+        """
+        Update the answer of a question by its ID.
+
+        :param key: The ID of the question.
+        :type key: int
+        :param new_answer: The new answer text.
+        :type new_answer: str
+        :param new_answer_type: The new answer type.
+        :type new_answer_type: int
+        :return: True if the update was successful, False otherwise.
+        :rtype: bool
+        """
+        with self.Session() as session:
+            try:
+                # Retrieve the existing question data
+                question_data = session.query(self._ques).filter(self._ques.id == key).first()
+                if question_data is None:
+                    return False  # Question data not found
+
+                # Retrieve the existing answer data
+                answer_data = session.query(self._answer).filter(self._answer.question_id == key).first()
+                if answer_data is None:
+                    # If no answer exists, create a new one
+                    new_answer_data = self._answer(
+                        question_id=key,
+                        answer=answer.answer,
+                        answer_type=answer.answer_type,
+                    )
+                    session.add(new_answer_data)
+                else:
+                    # Update the existing answer data
+                    answer_data.answer = answer.answer
+                    answer_data.answer_type = answer.answer_type
+
+                # Commit the changes
+                session.commit()
+                return True
+            except Exception as e:
+                # Log the exception or handle it as needed
+                print(f"An error occurred during update: {e}")
+                session.rollback()
+                return False
 
     def get_data_by_id(self, key: int) -> Optional[CacheData]:
         with self.Session() as session:

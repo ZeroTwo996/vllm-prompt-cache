@@ -110,6 +110,14 @@ class CacheStorage(metaclass=ABCMeta):
         pass
 
     @abstractmethod
+    def insert(self, data: CacheData):
+        pass
+
+    @abstractmethod
+    def update_answer_by_id(self, key, answer: Answer):
+        pass
+
+    @abstractmethod
     def get_data_by_id(self, key):
         pass
 

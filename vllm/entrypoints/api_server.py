@@ -334,7 +334,7 @@ async def _generate_with_prompt_cache(request_dict: dict, raw_request: Request) 
             if hit_callback and callable(hit_callback):
                 factor = max_rank - min_rank
                 hit_callback([(d[3].question, d[0] / factor if factor else d[0]) for d in cache_answers])
-            def post_process():
+            async def post_process():
                 if llm_cache.post_process_messages_func is temperature_softmax:
                     return_message = llm_cache.post_process_messages_func(
                         messages=[t[1] for t in cache_answers],
@@ -345,15 +345,35 @@ async def _generate_with_prompt_cache(request_dict: dict, raw_request: Request) 
                     return_message = llm_cache.post_process_messages_func(
                         [t[1] for t in cache_answers]
                     )
-                return return_message
+                
+                cache_answer = answers_dict.get(str(return_message))
 
-            return_message = time_cal(
+                # 已经有结果了
+                if not str(return_message).startswith("###Generating###"):
+                    return return_message, cache_answer
+                
+                # 循环等待上一次推理完成
+                TIMEOUT = 2  # 超时时间，单位为秒
+                while str(return_message).startswith("###Generating###"):
+                    # 检查是否超时
+                    if time.time() - start_time > TIMEOUT:
+                        return_message = "Timeout: The request took too long to complete."
+                        break
+                    await asyncio.sleep(0.01)
+                    cache_data = time_cal(llm_cache.data_manager.get_scalar_data,func_name="get_data",report_func=llm_cache.report.data,)(
+                        cache_answer[2],
+                        extra_param=context.get("get_scalar_data", None),
+                        session=session,
+                    )
+                    return_message = cache_data.answers[0].answer
+                return return_message, cache_answer
+
+            return_message, cache_whole_data = await time_cal(
                 post_process,
                 func_name="post_process",
                 report_func=llm_cache.report.post,
             )()
             llm_cache.report.hint_cache()
-            cache_whole_data = answers_dict.get(str(return_message))
             if session and cache_whole_data:
                 llm_cache.data_manager.add_session(
                     cache_whole_data[2], session.name, pre_embedding_data
@@ -376,7 +396,19 @@ async def _generate_with_prompt_cache(request_dict: dict, raw_request: Request) 
                 )
             return _cache_data_convert(return_message) # 找到相似Prompt，直接返回结果
 
-    # 没有找到相似Prompt，继续推理
+    # 没有找到相似Prompt，缓存Prompt及其向量，同时暂存“###Generating###”为该Prompt的结果，以便后续请求等待该Prompt推理完成
+    question_id: int
+    if cache_enable:
+        try:
+            question_id = time_cal(llm_cache.data_manager.save_prompt,func_name="save",report_func=llm_cache.report.save,)(
+                pre_store_data,
+                embedding_data,
+                session=session,
+                partition_key=partition_key)
+        except Exception as e:  # pylint: disable=W0703
+            gptcache_log.warning("failed to save the prompt and temp result to cache, error: %s", e)
+    
+    # 继续推理
     assert engine is not None
     results_generator = engine.generate(prompt, sampling_params, request_id)
 
@@ -396,28 +428,13 @@ async def _generate_with_prompt_cache(request_dict: dict, raw_request: Request) 
     # 缓存推理结果
     if cache_enable:
         try:
-
-            def update_cache_func(handled_llm_data, question=None):
-                if question is None:
-                    question = pre_store_data
-                else:
-                    question.content = pre_store_data
-                time_cal(
-                    llm_cache.data_manager.save,
-                    func_name="save",
-                    report_func=llm_cache.report.save,
-                )(
-                    question,
-                    handled_llm_data,
-                    embedding_data,
-                    extra_param=context.get("save_func", None),
-                    session=session,
-                    partition_key=partition_key,
+            def update_cache_func(answer):
+                time_cal(llm_cache.data_manager.update_answer)(
+                    question_id,
+                    answer
                 )
-                if (
-                    llm_cache.report.op_save.count > 0
-                    and llm_cache.report.op_save.count % llm_cache.config.auto_flush
-                    == 0
+                if (llm_cache.report.op_save.count > 0
+                    and llm_cache.report.op_save.count % llm_cache.config.auto_flush == 0
                 ):
                     llm_cache.flush()
 
